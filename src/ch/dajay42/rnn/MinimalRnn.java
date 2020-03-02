@@ -7,34 +7,37 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.*;
 
 import ch.dajay42.math.Util;
-import ch.dajay42.math.Matrix;
-import ch.dajay42.math.Util.*;
-import ch.dajay42.math.VectorN;
+import ch.dajay42.math.function.DoubleTernaryOperator;
+import ch.dajay42.math.linAlg.ColumnVectorDense;
+import ch.dajay42.math.linAlg.Matrix;
 
+@SuppressWarnings("WeakerAccess")
 public class MinimalRnn implements Rnn, Serializable {
 
 	private static final long serialVersionUID = 1L;
-
-	public boolean debug = false;
 	
 	private Matrix h; //hidden state
 	
 	//model parameters
-	Matrix Whh; //hidden to hidden
-	Matrix Wxh; //input to hidden
-	Matrix Why; //hidden to output
+	final Matrix Whh; //hidden to hidden
+	final Matrix Wxh; //input to hidden
+	final Matrix Why; //hidden to output
 
-	Matrix bh; // hidden bias
-	Matrix by; // output bias
+	final Matrix bh; // hidden bias
+	final Matrix by; // output bias
 	
 	
-	Matrix mWxh, mWhh, mWhy, mbh, mby; //memory variables for Adagrad
+	final Matrix mWxh;
+	final Matrix mWhh;
+	final Matrix mWhy;
+	final Matrix mbh;
+	final Matrix mby; //memory variables for Adagrad
 	
 	//hyperparameters
 	final int h_size; // hidden size
 	final int xy_size; // vocab size
 	double learning_rate = 0.1d; //1e-1;
-	static double gradient_limit = 5.0d;
+	static final double gradient_limit = 5.0d;
 	private double dropout = 0.5d;
 	private double smooth_loss;
 	private double last_loss = Double.POSITIVE_INFINITY;
@@ -51,7 +54,7 @@ public class MinimalRnn implements Rnn, Serializable {
 	final static DoubleBinaryOperator Adagrad1 = 
 			(mem, dparam) ->  mem + dparam * dparam;
 	
-	final DoubleTernaryOperator Adagrad2 = 
+	final DoubleTernaryOperator Adagrad2 =
 			(param, dparam, mem) -> param - getLearningRate() * dparam / Math.sqrt(mem + 1e-8);
 	
 	// gradient clipping
@@ -62,13 +65,13 @@ public class MinimalRnn implements Rnn, Serializable {
 	public MinimalRnn(int hiddensize, int paramsize) {
 		h_size = hiddensize;
 		xy_size = paramsize;
-		h = new VectorN(h_size);
+		h = new ColumnVectorDense(h_size);
 		Whh = Matrix.random(h_size, h_size, -0.01, 0.01);
 		Wxh = Matrix.random(h_size, xy_size, -0.01, 0.01);
 		Why = Matrix.random(xy_size, h_size, -0.01, 0.01);
 		
-		bh = new VectorN(h_size);
-		by = new VectorN(xy_size);
+		bh = new ColumnVectorDense(h_size);
+		by = new ColumnVectorDense(xy_size);
 
 		mWxh = Matrix.zeroesLike(Wxh);
 		mWhh = Matrix.zeroesLike(Whh);
@@ -87,8 +90,7 @@ public class MinimalRnn implements Rnn, Serializable {
 	    h.inplaceElementWise(Math::tanh);
 	    //compute the output vector
 	    //y = Why*h + by
-	    Matrix y = Why.multiplySimple(h).inplaceSum(by);
-	    return y;
+		return Why.multiplySimple(h).inplaceSum(by);
 	}
 
 	@Override
@@ -113,7 +115,7 @@ public class MinimalRnn implements Rnn, Serializable {
 		Matrix pWhy = Why;
 		
 		if(doDropout){
-			pWhy = Why.elementWise(Util.MULTIPLICATION, Matrix.bernoulliLike(Why, p));
+			pWhy = Why.elementWise(Util::multiplication, Matrix.bernoulliLike(Why, p));
 		}
 		
 		Matrix[] xs = new Matrix[inputs],
@@ -136,15 +138,15 @@ public class MinimalRnn implements Rnn, Serializable {
 		    
 		    //ys[t] = Why*hs[t] + by
 		    ys[t] = pWhy.multiplySimple(hs[t]);
-		    if(doDropout) ys[t].scalarOp(Util.DIVISION, p);
+		    if(doDropout) ys[t].scalarOp(Util::division, p);
 		    ys[t].inplaceSum(by); // unnormalized log probabilities for next chars
 		    
 		    //ps[t] = exp(ys[t]) / sum(exp(ys[t]))
 		    Matrix expYsT = ys[t].elementWise(Math::exp);
-		    ps[t] = expYsT.scalarOp(Util.DIVISION, expYsT.aggregateOp(Util::sum)); // probabilities for next chars
+		    ps[t] = expYsT.scalarOp(Util::division, expYsT.aggregateOp(Util::sum)); // probabilities for next chars
 		    
 		    // loss += -log(ps[t].value[indexOf(expectedOut[t])][0])
-		    loss += -Math.log(ps[t].getValueAt(expectedIndex[t],0)); // softmax (cross-entropy loss)
+		    loss += -Math.log(ps[t].getValueAt(expectedIndex[t])); // softmax (cross-entropy loss)
 		}
 
 		// backward pass: compute gradients going backwards
@@ -162,7 +164,7 @@ public class MinimalRnn implements Rnn, Serializable {
 			//dy = copyOf(ps[t])
 			dy = ps[t].clone();
 			
-			dy.modValueAt(expectedIndex[t], 0, -1.0); // backprop into y. see http://cs231n.github.io/neural-networks-case-study/#grad if confused here
+			dy.modValueAt(expectedIndex[t],  -1.0); // backprop into y. see http://cs231n.github.io/neural-networks-case-study/#grad if confused here
 			
 			//dWhy += dy*(hs[t]^T)
 			dWhy.inplaceSum(dy.multiplySimple(hs[t].transpose()));
@@ -174,7 +176,7 @@ public class MinimalRnn implements Rnn, Serializable {
 			dh = (pWhy.transpose().multiplySimple(dy)).inplaceSum(dhnext); // backprop into h
 			
 			//dhraw = (1 - hs[t].^2) .* dh //mind the operator precedence
-			dhraw = (hs[t].scalarOp(Math::pow, 2)).inplaceElementWise(a -> 1 - a).inplaceElementWise(Util.MULTIPLICATION, dh); // backprop through tanh nonlinearity
+			dhraw = (hs[t].scalarOp(Math::pow, 2)).inplaceElementWise(a -> 1 - a).inplaceElementWise(Util::multiplication, dh); // backprop through tanh nonlinearity
 			
 			//dbh += dhraw
 			dbh.inplaceSum(dhraw);
@@ -198,12 +200,16 @@ public class MinimalRnn implements Rnn, Serializable {
 		
 		//update loss + learning rate
 		loss /= inputs;
+		//*
 		if(loss > last_loss)
-			learning_rate *= 0.8;
+			learning_rate *= 0.9998;
 		else
-			learning_rate *= 1.1;
+			learning_rate *= 1.0001;
+		if(learning_rate < 1e-32)
+			learning_rate = 1e-32;
+		//*/
 		last_loss = loss;
-		smooth_loss = smooth_loss * 0.99 + loss * 0.01;
+		smooth_loss = smooth_loss * 0.9 + loss * 0.1;
 		
 		
 		// perform parameter update with Adagrad
@@ -231,7 +237,7 @@ public class MinimalRnn implements Rnn, Serializable {
 	@Override
 	public List<Matrix> sample(Matrix h, Matrix[] seed, int n) {
 		this.h = h;
-		ArrayList<Matrix> ret = new ArrayList<Matrix>();
+		ArrayList<Matrix> ret = new ArrayList<>();
 		for(int i = 0; i < seed.length-1; i++){
 			step(seed[i]);
 			ret.add(seed[i]);
@@ -251,9 +257,9 @@ public class MinimalRnn implements Rnn, Serializable {
 	Matrix softmax(Matrix vector){
 		//x = beta * vector //temperature-adjusted probabilities
 		//v = exp(x) / sum(exp(x))
-		Matrix p = vector.scalarOp(Util.MULTIPLICATION, beta).inplaceElementWise(Math::exp); //beware of overflows
+		Matrix p = vector.scalarOp(Util::multiplication, beta).inplaceElementWise(Math::exp); //beware of overflows
 		double scalar = p.aggregateOp(Util::sum);
-		double[] v = p.scalarOp(Util.DIVISION, scalar).getValuesInColumn(0);
+		double[] v = p.scalarOp(Util::division, scalar).getValuesInColumn(0);
 		int index = 0;
 		double selection = ThreadLocalRandom.current().nextDouble();
 		for(int i = 0; i < v.length; i++){
@@ -264,7 +270,7 @@ public class MinimalRnn implements Rnn, Serializable {
 			}
 		}
 		Matrix x = Matrix.zeroesLike(vector, true);
-		x.setValueAt(index, 0, 1.0);
+		x.setValueAt(index, 1.0);
 		return x;
 	}
 

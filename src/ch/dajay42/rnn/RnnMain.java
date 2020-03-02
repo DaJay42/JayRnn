@@ -4,62 +4,69 @@ import java.io.*;
 import java.nio.file.*;
 import java.util.*;
 
-import ch.dajay42.collections.RandomizedTreeSet;
-import ch.dajay42.math.*;
+import ch.dajay42.application.*;
+import ch.dajay42.application.config.*;
+import ch.dajay42.math.linAlg.*;
 
-@SuppressWarnings("unused")
+
 public class RnnMain {
 	
-	static RnnEncDec<Byte> asciiEncDec;
+	private static RnnEncDec<Byte> asciiEncDec;
 
-	static Rnn currentRnn = null;
-	static String rnnLoadPath = "";
-	static String rnnStorePath = "";
+	private static Rnn currentRnn = null;
+	private static String rnnLoadPath = "";
+	private static String rnnStorePath = "";
 	
-	static String textPath = "";
-	static byte[] text = null;
-	static int textLength = 0;
-	static Matrix[] textEncd = null;
-	static int offset = 0;
+	private static String textPath = "";
+	private static byte[] text = null;
+	private static int textLength = 0;
+	private static Matrix[] textEncd = null;
+	private static int offset = 0;
 	
-	static int seqLength = 32;
-	static int autoSampleFrequency = 128;
-	static int autoSampleSize = 256;
-	static int blockSize = 1024*1024;
 	
-	final static String helpStr = "help";
-	final static String quitStr = "quit";
-	final static String statusStr = "status";
+	private static int chunkSize = 32;
+	private static int autoSampleFrequency = 100;
+	private static int autoSampleSize = 256;
+	private static int blockSize = 256*1024;
 	
-	final static String loadStr = "load";
-	final static String storeStr = "store";
-	final static String createStr = "create";
+	private final static Map<String, Setting> SETTING_MAP = new HashMap<>(){
+		{
+			put("chunkSize", new Setting<>(() -> chunkSize, i -> chunkSize = i, Parser.INTEGER_PARSER));
+			put("autoSampleFrequency", new Setting<>(() -> autoSampleFrequency, i -> autoSampleFrequency = i, Parser.INTEGER_PARSER));
+			put("autoSampleSize", new Setting<>(() -> autoSampleSize, i -> autoSampleSize = i, Parser.INTEGER_PARSER));
+			put("blockSize", new Setting<>(() -> blockSize, i -> blockSize = i, Parser.INTEGER_PARSER));
+		}
+	};
 	
-	final static String sampleStr = "sample";
-	final static String learnStr = "learn";
+	private final static SimpleCLI CLI = new SimpleCLI();
 	
-	final static String readStr = "read";
-	final static String writeStr = "write";
+	private final static String statusStr = "status";
 	
-	final static String seqLengthStr = "setseqlength";
-	final static String autoFreqStr = "setautosamplefreq";
-	final static String autoSizeStr = "setautosamplesize";
-	final static String blockSizeStr = "setblocksize";
-	final static String temperatureStr = "settemperature";
-	final static String learnRateStr = "setlearnrate";
+	private final static String loadStr = "load";
+	private final static String storeStr = "store";
+	private final static String createStr = "create";
 	
-	final static String settingsFile = "settings.parcel";
+	private final static String sampleStr = "sample";
+	private final static String learnStr = "learn";
+	
+	private final static String readStr = "read";
+	private final static String writeStr = "write";
+	
+	private final static String temperatureStr = "settemperature";
+	private final static String learnRateStr = "setlearnrate";
+	
+	private final static String settingsFile = "jayrnn.ini";
 
 	
-	static void initEncDec(){
-		Set<Byte> charset = new HashSet<Byte>();
+	private static void initEncDec(){
+		Set<Byte> charset = new HashSet<>();
 		for(byte s = 0; s >= 0; s++){
 			charset.add(s);
 		}
-		asciiEncDec = new RnnEncDec<Byte>(charset);
+		asciiEncDec = new RnnEncDec<>(charset);
 	}
 	
-	static void loadTextBlock(){
+	private static void loadTextBlock(){
 		textEncd = new Matrix[blockSize];
 		System.gc();
 		System.out.println("Preparing text segment...");
@@ -76,13 +83,16 @@ public class RnnMain {
 		System.out.println();*/
 	}
 	
-	public static void loadText(String filename){
+	private static void loadText(String filename){
 		System.out.println("Loading text from \""+filename+"\"...");
 		try {
 			text = Files.readAllBytes(FileSystems.getDefault().getPath(filename));
 		} catch (IOException e) {
-			System.err.println(e);
-			System.out.println("Error: Could not load text from file "+filename);
+			System.err.print("Error: Could not load text from file ");
+			System.err.print(filename);
+			System.err.print(" due to ");
+			System.err.print(e.toString());
+			System.err.println();
 			return;
 		}
 		
@@ -91,48 +101,35 @@ public class RnnMain {
 		textPath = filename;
 		textEncd = null;
 		
-		System.out.println("Text loaded.");
+		System.out.println("Text file loaded.");
 		loadTextBlock();
 	}
 	
-	public static void loadSettings(String filename){
-		SettingsParcel parcel = null;
+	private static void loadSettings(){
 		try {
-			byte[] bytes = Files.readAllBytes(FileSystems.getDefault().getPath(filename));
-			try(ObjectInputStream s = new ObjectInputStream(new ByteArrayInputStream(bytes))){
-				parcel = (SettingsParcel) s.readObject();
-			}
-		} catch (IOException | ClassNotFoundException e) {
-			System.out.println("No settings file found.");
-			return;
-		}
-		seqLength = parcel.chunkSize;
-		autoSampleFrequency = parcel.autoSampleFrequency;
-		autoSampleSize = parcel.autoSampleSize;
-		blockSize = parcel.blockSize;
-	}
-	
-	public static void storeSettings(String filename){
-		if(!filename.endsWith(".parcel"))
-			filename = filename + ".parcel";
-		
-		SettingsParcel parcel = new SettingsParcel(seqLength, autoSampleFrequency, autoSampleSize,blockSize);
-		try(ByteArrayOutputStream bs = new ByteArrayOutputStream()){
-			try(ObjectOutputStream s = new ObjectOutputStream(bs)){
-				s.writeObject(parcel);
-				s.flush();
-				byte[] bytes = bs.toByteArray();
-				Files.write(FileSystems.getDefault().getPath(filename), bytes);
-				
-			}
+			ConfigUtil.readFromFile(settingsFile, SETTING_MAP);
 		} catch (IOException e) {
-			System.err.println(e);
-			System.out.println("Error: Could not store Settings in file "+filename);
-			return;
+			System.out.println("No settings file found.");
 		}
 	}
 	
-	public static void loadRnn(String filename){
+	private static void storeSettings(String filename){
+		if(!filename.endsWith(".ini"))
+			filename = filename + ".ini";
+		
+		try{
+			ConfigUtil.writeToFile(filename, SETTING_MAP);
+		} catch (IOException e) {
+			System.err.print("Error: Could not store Settings in file ");
+			System.err.print(filename);
+			System.err.print(" due to ");
+			System.err.print(e.toString());
+			System.err.println();
+			
+		}
+	}
+	
+	private static void loadRnn(String filename){
 		try {
 			byte[] bytes = Files.readAllBytes(FileSystems.getDefault().getPath(filename));
 			try(ObjectInputStream s = new ObjectInputStream(new ByteArrayInputStream(bytes))){
@@ -140,18 +137,21 @@ public class RnnMain {
 				currentRnn = (Rnn) o;
 			}
 		} catch (IOException | ClassNotFoundException e) {
-			System.err.println(e);
-			System.out.println("Error: Could not load RNN from file "+filename);
+			System.err.print("Error: Could not load RNN from file ");
+			System.err.print(filename);
+			System.err.print(" due to ");
+			System.err.print(e.toString());
+			System.err.println();
 			return;
 		}
 		offset = 0;
 		rnnLoadPath = filename;
 		rnnStorePath = "";
 
-		System.out.println("RNN loaded.");
+		System.out.println("RNN loaded from '"+rnnLoadPath+"'.");
 	}
 	
-	public static void storeRnn(String filename){
+	private static void storeRnn(String filename){
 		
 		if(!filename.endsWith(".rnn"))
 			filename = filename + ".rnn";
@@ -165,45 +165,48 @@ public class RnnMain {
 				
 			}
 		} catch (IOException e) {
-			System.err.println(e);
-			System.out.println("Error: Could not store RNN in file "+filename);
+			System.err.print("Error: Could not store RNN in file ");
+			System.err.print(filename);
+			System.err.print(" due to ");
+			System.err.print(e.toString());
+			System.err.println();
 			return;
 		}
 		rnnStorePath = filename;
-		System.out.println("RNN stored to '"+filename+"'.");
+		System.out.println("RNN stored to '"+rnnStorePath+"'.");
 	}
 	
-	public static void createRnn(int hiddenSize){
-		currentRnn = new MinimalRnn(hiddenSize, asciiEncDec.n);
+	private static void createRnn(int hiddenSize){
+		currentRnn = new MinimalRnn(hiddenSize, asciiEncDec.classes);
 		offset = 0;
 		rnnLoadPath = "";
 		rnnStorePath = "";
 		System.out.println("Created new RNN.");
 	}
 	
-	static void learn(int chunks){
-		Matrix[] in = new Matrix[seqLength];
-		Matrix[] exout = new Matrix[seqLength];
+	private static void learn(int chunks){
+		Matrix[] in = new Matrix[chunkSize];
+		Matrix[] exout = new Matrix[chunkSize];
 		
 
 		System.out.append('\n');
 		for(int i = 0; i < chunks; i++){
 			
-			if((offset % blockSize) + seqLength > blockSize){
+			if((offset % blockSize) + chunkSize > blockSize){
 				loadTextBlock();
-				Matrix hmat = new VectorNSparse(currentRnn.getHiddenSize());
+				Matrix hmat = new ColumnVectorSparse(currentRnn.getHiddenSize());
 				currentRnn.setH(hmat);
 			}
 			
 			Matrix last = null;
-			for(int j = 0; j < seqLength; j++){
+			for(int j = 0; j < chunkSize; j++){
 				int jk = (j + offset) % blockSize;
 				in[j] = textEncd[jk];
 				exout[j] = textEncd[jk];
-				if(j == seqLength - 1)
+				if(j == chunkSize - 1)
 					last = textEncd[jk];
 			}
-			offset += seqLength;
+			offset += chunkSize;
 			offset %= textLength;
 			
 			
@@ -214,7 +217,7 @@ public class RnnMain {
 				Matrix[] seed = {asciiEncDec.encode(text[offset])};
 				sample(autoSampleSize, seed);
 			}
-			System.out.append("Loss/step: "+ currentRnn.getLastLoss());
+			System.out.append("Loss/step: ").append(Double.toString(currentRnn.getLastLoss()));
 			
 			System.out.append('\n');
 			System.out.flush();
@@ -222,7 +225,7 @@ public class RnnMain {
 
 	}
 	
-	static void write(String filename, int chars, Matrix[] seed){
+	private static void write(String filename, int chars, Matrix[] seed){
 		if(!filename.endsWith(".txt"))
 			filename = filename + ".txt";
 		
@@ -235,25 +238,29 @@ public class RnnMain {
 				Files.write(FileSystems.getDefault().getPath(filename), bytes);
 			}
 		} catch (IOException e) {
-			System.err.println(e);
-			System.out.println("Error: Could not write to file "+filename);
+			System.err.print("Error: Could not write to file ");
+			System.err.print(filename);
+			System.err.print(" due to ");
+			System.err.print(e.toString());
+			System.err.println();
 			return;
 		}
 		System.out.println("Wrote "+chars+" characters to '"+filename+"'.");
 	}
 	
-	static void sample(int chars, Matrix[] seed){
+	private static void sample(int chars, Matrix[] seed){
 		sample(chars, seed, System.out);
 	}
 	
 	
-	static void sample(int chars, Matrix[] seed, PrintStream out){
+	private static void sample(int chars, Matrix[] seed, PrintStream out){
 		
 		out.append('\n');
-		out.append("training steps = "+currentRnn.getLearnedSteps());
+		out.append("training steps = ");
+		out.append(Long.toString(currentRnn.getLearnedSteps()));
 		out.append('\n');
 
-		Matrix h = new VectorN(currentRnn.getHiddenSize());
+		Matrix h = new ColumnVectorDense(currentRnn.getHiddenSize());
 		
 		List<Matrix> res = currentRnn.sample(h, seed, chars);
 		Byte b;
@@ -267,35 +274,26 @@ public class RnnMain {
 
 	}
 	
-	static void status(){
+	private static void status(){
 		StringBuilder builder = new StringBuilder();
 		builder.append("RnnMain:");
 		builder.append('\n');
 		builder.append('\n');
-		builder.append("[Settings]");
-		builder.append('\n');
-		builder.append("chunkSize="+seqLength);
-		builder.append('\n');
-		builder.append("blockSize="+blockSize);
-		builder.append('\n');
-		builder.append("autoSampleFrequency="+autoSampleFrequency);
-		builder.append('\n');
-		builder.append("autoSampleSize="+autoSampleSize);
-		builder.append('\n');
+		builder.append(ConfigUtil.prettyPrint(SETTING_MAP, "\n"));
 		builder.append('\n');
 		builder.append("[RNN]");
 		builder.append('\n');
 		
 		if(currentRnn != null){
-			builder.append("size="+currentRnn.getHiddenSize());
+			builder.append("size=").append(currentRnn.getHiddenSize());
 			builder.append('\n');
-			builder.append("steps="+currentRnn.getLearnedSteps());
+			builder.append("steps=").append(currentRnn.getLearnedSteps());
 			builder.append('\n');
-			builder.append("current loss="+currentRnn.getLastLoss());
+			builder.append("current loss=").append(currentRnn.getLastLoss());
 			builder.append('\n');
-			builder.append("temperature="+currentRnn.getTemperature());
+			builder.append("temperature=").append(currentRnn.getTemperature());
 			builder.append('\n');
-			builder.append("learningrate="+currentRnn.getLearningRate());
+			builder.append("learningrate=").append(currentRnn.getLearningRate());
 			builder.append('\n');
 		}else{
 			builder.append("null");
@@ -305,158 +303,12 @@ public class RnnMain {
 		builder.append('\n');
 		builder.append("[Text]");
 		builder.append('\n');
-		builder.append("path="+textPath);
+		builder.append("path=").append(textPath);
 		builder.append('\n');
-		builder.append("length="+textLength);
+		builder.append("length=").append(textLength);
 		builder.append('\n');
 		builder.append('\n');
 		System.out.println(builder.toString());
-	}
-	
-	static void help(){
-		StringBuilder builder = new StringBuilder();
-		builder.append("The following commands are available:\n");
-		builder.append("\thelp\n");
-		builder.append("\n");				
-		builder.append("\tnew h\n");
-		builder.append("\tstore filename\n");
-		builder.append("\tload filename\n");
-		builder.append("\n");
-		builder.append("\tlearn n\n");
-		builder.append("\tsample n [c]\n");
-		builder.append("\n");
-		builder.append("\t"+seqLengthStr+" n \n");
-		builder.append("\t"+autoFreqStr+" n \n");
-		builder.append("\t"+autoSizeStr+" n \n");
-		builder.append("\n");
-		builder.append("\tquit\n");
-		builder.append("\n");
-		builder.append("\n\n\n");
-		
-		builder.append("help: Displays this text.\n\n");
-		builder.append("new: Discards the current RNN and creates an untrained RNN with <h> hidden internal states.\n\n");
-		builder.append("store: Stores the current RNN in <filename>.\n\n");
-		builder.append("load: Discardes the current RNN and loads the one stored in <filename>.\n\n");
-		builder.append("learn: Learn from currently loaded text file for <n> chunks.\n");
-		builder.append("sample: Samples and prints <n> characters from the RNN, starting from the seed character <c>, or newline.\n\n");
-		builder.append("quit: Saves settings and terminates the program.\n\n");
-		builder.append(seqLengthStr+": Sets size of chunks to <n> characters.\n\n");
-		builder.append(autoFreqStr+": Sets 'learn' to auto-sample every <n> chunks.\n\n");
-		builder.append(autoSizeStr+": Sets 'learn' to auto-sample for <n> characters.\n\n");
-		System.out.println(builder.toString());
-		
-	}
-	
-	static boolean parseCommand(String[] words){
-		try{
-			switch(words[0].toLowerCase()){
-			case(helpStr):
-				help();
-				break;
-			case(statusStr):
-				status();
-				break;
-			case(learnStr):
-				if(currentRnn != null){
-					if(text != null)
-						learn(Integer.parseInt(words[1]));
-					else
-						System.out.println("Cannot learn: No text loaded.");
-				}else{
-					System.out.println("Cannot learn: No RNN loaded.");
-				}
-				break;
-			case(loadStr):
-				loadRnn(words[1]);
-				break;
-			case(createStr):
-				createRnn(Integer.parseInt(words[1]));
-				break;
-			case(quitStr):
-				System.out.println("Saving settings...");
-				System.out.println("Quitting.");
-				return false;
-			case(sampleStr):
-				if(currentRnn != null){
-					String seedStr = (words.length > 2) ? words[2] : "\n";
-					byte[] seeds = seedStr.getBytes();
-					Matrix[] seed = new Matrix[seedStr.length()];
-					for(int i = 0; i < seeds.length; i++){
-						seed[i] = asciiEncDec.encode(seeds[i]);
-					}
-					sample(Integer.parseInt(words[1]), seed);
-				}else{
-					System.out.println("Cannot sample: No RNN loaded.");
-				}
-				break;
-			case(storeStr):
-				if(currentRnn != null){
-					storeRnn(words[1]);
-				}else{
-					System.out.println("Cannot store RNN: No RNN loaded.");
-				}
-				break;
-			case(seqLengthStr):
-				seqLength = Integer.parseInt(words[1]);
-				System.out.println("Set seqLength to "+seqLength+".");
-				break;
-			case(blockSizeStr):
-				blockSize = Integer.parseInt(words[1]);
-				System.out.println("Set blockSize to "+blockSize+".");
-				break;
-			case(autoFreqStr):
-				autoSampleFrequency = Integer.parseInt(words[1]);
-				System.out.println("Set autoSampleFrequency to "+autoSampleFrequency+".");
-				break;
-			case(autoSizeStr):
-				autoSampleSize = Integer.parseInt(words[1]);
-				System.out.println("Set autoSampleSize to "+autoSampleSize+".");
-				break;
-			case(temperatureStr):
-				if(currentRnn != null){
-					double t = Double.parseDouble(words[1]);
-					currentRnn.setTemperature(t);
-					System.out.println("Set temperature to "+t+".");
-				}else
-					System.out.println("Cannot set temperature: no RNN loaded.");
-				break;
-			case(learnRateStr):
-				if(currentRnn != null){
-					double r = Double.parseDouble(words[1]);
-					currentRnn.setLearningRate(r);
-					System.out.println("Set learning rate to "+r+".");
-				}else
-					System.out.println("Cannot set learning rate: no RNN loaded.");
-				break;
-			case(readStr):
-				loadText(words[1]);
-				break;
-			case(writeStr):
-				if(currentRnn != null){
-					int chars = (words.length > 2) ? Integer.parseInt(words[2]) : autoSampleSize;
-	
-					String seedStr = (words.length > 3) ? seedStr = words[3] : "\n\n";
-					byte[] seeds = seedStr.getBytes();
-					Matrix[] seed = new Matrix[seedStr.length()];
-					for(int i = 0; i < seeds.length; i++){
-						seed[i] = asciiEncDec.encode(seeds[i]);
-					}
-					
-					write(words[1], chars, seed);
-				}else{
-					System.out.println("Cannot write: No RNN loaded.");
-				}
-				break;
-			default:
-				System.err.println("Unknown command. Enter 'help' to get a list of commands.");
-				System.out.println();
-			}
-		}catch(Exception e){
-			e.printStackTrace(System.err);
-			System.err.println("Failed to parse command. Enter 'help' to get a list of commands.");
-			System.out.println();
-		}
-		return true;
 	}
 	
 	public static void main(String[] args) {
@@ -465,40 +317,84 @@ public class RnnMain {
 		initEncDec();
 		System.out.println("...");
 		
-		loadSettings(settingsFile);
+		loadSettings();
 		System.out.println("...");
 		
-		boolean b = true;
-		String s = "";
-
-		System.out.println("RnnMain: Ready.");
+		CLI.greeting = "RnnMain: Ready.";
+		CLI.registerCommmands(
+				new CommandGet(SETTING_MAP),
+				new CommandSet(SETTING_MAP),
+				Command.create(statusStr, "", "Prints the current status of the RNN", (strings) -> status()),
+				Command.create(learnStr, "<n>", "Learn from currently loaded text file for <n> chunks.", (strings) -> {
+					if(currentRnn != null){
+						if(text != null)
+							learn(Integer.parseInt(strings[0]));
+						else
+							System.out.println("Cannot learn: No text loaded.");
+					}else{
+						System.out.println("Cannot learn: No RNN loaded.");
+					}}),
+				Command.create(loadStr,"<filename>","Discards the current RNN and loads the one stored in <filename>.", strings -> loadRnn(strings[0])),
+				Command.create(createStr, "<h>", "Discards the current RNN and creates an untrained RNN with <h> hidden internal states.", strings -> createRnn(Integer.parseInt(strings[0]))),
+				Command.create(sampleStr, "<n> [<chars>]", "Samples and prints <n> characters from the RNN, starting from the seed characters <chars>, or newline.", strings -> {
+					if(currentRnn != null){
+						int samples = Integer.parseInt(strings[0]);
+						String seedStr = (strings.length > 1) ? strings[1] : "\n";
+						byte[] seeds = seedStr.getBytes();
+						Matrix[] seed = new Matrix[seedStr.length()];
+						for(int i = 0; i < seeds.length; i++){
+							seed[i] = asciiEncDec.encode(seeds[i]);
+						}
+						sample(samples, seed);
+					}else{
+						System.out.println("Cannot sample: No RNN loaded.");
+					}}),
+				Command.create(storeStr,"<filename>","Stores the current RNN in <filename>.", strings -> {
+					if(currentRnn != null){
+						storeRnn(strings[0]);
+					}else{
+						System.out.println("Cannot store RNN: No RNN loaded.");
+					}}),
+				Command.create(temperatureStr, "<d>", "Sets the current RNN's temperature to <d>.", strings -> {
+					if(currentRnn != null){
+						double t = Double.parseDouble(strings[0]);
+						currentRnn.setTemperature(t);
+						System.out.println("Set temperature to "+t+".");
+					}else
+						System.out.println("Cannot set temperature: no RNN loaded.");
+					}),
+				Command.create(learnRateStr, "<d>", "Sets the current RNN's learnRate to <d>.", strings -> {
+					if(currentRnn != null){
+						double r = Double.parseDouble(strings[0]);
+						currentRnn.setLearningRate(r);
+						System.out.println("Set learning rate to "+r+".");
+					}else
+						System.out.println("Cannot set learning rate: no RNN loaded.");
+				}),
+				Command.create(readStr, "<filename>", "Reads the file <filename> and sets it to be used as input for the RNN.", strings -> loadText(strings[0])),
+				Command.create(writeStr,"<filename> [<n> [<chars>]]","Samples <n> characters from the RNN, starting from the seed characters <chars>, or newline, writing them to <filename>.", strings -> {
+					if(currentRnn != null){
+						int chars = (strings.length > 1) ? Integer.parseInt(strings[1]) : autoSampleSize;
+						
+						String seedStr = (strings.length > 2) ?  strings[2] : "\n\n";
+						byte[] seeds = seedStr.getBytes();
+						Matrix[] seed = new Matrix[seedStr.length()];
+						for(int i = 0; i < seeds.length; i++){
+							seed[i] = asciiEncDec.encode(seeds[i]);
+						}
+						
+						write(strings[0], chars, seed);
+					}else{
+						System.out.println("Cannot write: No RNN loaded.");
+					}})
+		);
 		
+		CLI.parseProgramArgs(args);
 		
-		try(Scanner in = new Scanner(System.in)){
-			while(b){
-				System.err.flush();
-				System.out.flush();
-				System.out.print("?: ");
-				s = in.nextLine();
-				b = parseCommand(s.split(" "));
-			}
-		}
+		CLI.greet();
+		
+		CLI.readContinuously();
+		
 		storeSettings(settingsFile);
-	}
-
-	
-	static class SettingsParcel implements Serializable{
-		private static final long serialVersionUID = 1L;
-		int chunkSize = 32;
-		int autoSampleFrequency = 100;
-		int autoSampleSize = 256;
-		int blockSize = 256*1024;
-		
-		SettingsParcel(int chunkSize, int autoSampleFrequency, int autoSampleSize, int blockSize){
-			this.chunkSize = chunkSize;
-			this.autoSampleFrequency = autoSampleFrequency;
-			this.autoSampleSize = autoSampleSize;
-			this.blockSize = blockSize;
-		}
 	}
 }

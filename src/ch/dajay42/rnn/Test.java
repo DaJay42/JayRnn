@@ -6,10 +6,8 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 
 import ch.dajay42.collections.RandomizedTreeSet;
-import ch.dajay42.math.Matrix;
-import ch.dajay42.math.MatrixNxM;
-import ch.dajay42.rnn.MinimalRnn;
-import ch.dajay42.rnn.RnnEncDec;
+import ch.dajay42.math.linAlg.ColumnVectorDense;
+import ch.dajay42.math.linAlg.Matrix;
 
 public class Test {
 
@@ -17,7 +15,7 @@ public class Test {
 		inspectChars();
 	}
 	
-	public static void inspectChars(){
+	private static void inspectChars(){
 		char[] chars = new char[256];
 		for(short i = 0; i < 256; i++){
 			chars[i] = (char) i;
@@ -29,14 +27,14 @@ public class Test {
 				System.out.print(chars[i*16+j]);
 			}
 		}
-		System.out.println("");
+		System.out.println();
 	}
 	
 	public static void testMinRnn(){
 		int h = 64;
 		int n = 256;
 		
-		List<String> lines = null;
+		List<String> lines;
 		try {
 			lines = Files.readAllLines(FileSystems.getDefault().getPath("res/shakespear.txt"));
 		} catch (IOException e) {
@@ -45,7 +43,7 @@ public class Test {
 		}
 		String text = String.join("\n", lines);
 		
-		RandomizedTreeSet<Character> charset = new RandomizedTreeSet<Character>();
+		RandomizedTreeSet<Character> charset = new RandomizedTreeSet<>();
 		for(char c : text.toCharArray()){
 			charset.add(c);
 		}
@@ -53,7 +51,7 @@ public class Test {
 		//	System.out.println(s);
 		//}
 		
-		RnnEncDec<Character> encdec = new RnnEncDec<Character>(charset);
+		RnnEncDec<Character> encdec = new RnnEncDec<>(charset);
 		MinimalRnn rnn = new MinimalRnn(h, charset.size());
 		
 		int k = 1000;//chunk size
@@ -83,7 +81,6 @@ public class Test {
 		}*/
 
 		System.out.append('\n');
-		if(true){
 		
 		for(int i = 0; i < Integer.MAX_VALUE; i++){
 			Matrix seed = encdec.encode(text.charAt(offset % kk));
@@ -95,15 +92,16 @@ public class Test {
 			}
 			offset += k;
 			
-			Matrix hmat = new MatrixNxM(h,1);
+			Matrix hmat = new ColumnVectorDense(h);
 			
 			rnn.learn(in, exout, hmat);
 			
 			if(i % 10 == 0){
 				System.out.append('\n');
-				System.out.append("i = "+i);
+				System.out.append("i = ");
+				System.out.append(Integer.toString(i));
 				System.out.append('\n');
-				//List<MatrixNxM> out = rnn.sample(new MatrixNxM(h,1), seed, n);
+				//List<Matrix> out = rnn.sample(new MatrixDense(h,1), seed, n);
 				
 				rnn.setH(hmat);
 				Matrix r = seed;
@@ -114,7 +112,7 @@ public class Test {
 					r = encdec.encode(c);
 				}
 				
-				/*for(MatrixNxM m : out){
+				/*for(Matrix m : out){
 					Character c = encdec.decode(m);
 					System.out.append(c);
 				}*/
@@ -122,9 +120,10 @@ public class Test {
 				System.out.append('\n');
 				System.out.append('\n');
 			}
-			System.out.append("Loss: "+ rnn.getLastLoss());
+			System.out.append("Loss: ");
+			System.out.append(Double.toString(rnn.getLastLoss()));
 			System.out.append('\n');
 			System.out.flush();
-		}}
+		}
 	}
 }

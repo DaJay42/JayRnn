@@ -3,48 +3,46 @@ package ch.dajay42.rnn;
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
 
-import ch.dajay42.collections.RandomizedTreeMap;
 import ch.dajay42.math.Util;
-import ch.dajay42.math.VectorNSparse;
-import ch.dajay42.math.Matrix;
+import ch.dajay42.math.linAlg.ColumnVectorSparse;
+import ch.dajay42.math.linAlg.Matrix;
 
-@SuppressWarnings("unused")
 public class RnnEncDec<E extends Comparable<E>> {
 
-	Map<E, Integer> forward = new HashMap<E, Integer>();
-	Map<Integer, E> backward = new HashMap<Integer, E>();
+	private final Map<E, Integer> forward = new HashMap<>();
+	private final Map<Integer, E> backward = new HashMap<>();
 	
-	int n;
+	final int classes;
 	
 	/**inverse of prediction Temperature*/
-	double beta = 1;
+	private double beta = 1;
 	
 	@SuppressWarnings("unchecked")
-	public RnnEncDec(Set<E> elements) {
+	RnnEncDec(Set<E> elements) {
 		Object[] elems = elements.toArray();
 		Arrays.sort(elems);
-		n = elems.length;
+		classes = elems.length;
 		
-		for(Integer i = 0; i < n; i++){
+		for(Integer i = 0; i < classes; i++){
 			forward.put((E) elems[i], i);
 			backward.put(i, (E) elems[i]);
 		}
 		
 	}
 	
-	public Matrix encode(E item){
-		Matrix e = new VectorNSparse(n);
-		int i = forward.get(item);
-		e.setValueAt(i,0, 1);
-		return e;
+	Matrix encode(E item){
+		Matrix v = new ColumnVectorSparse(classes);
+		int e = forward.get(item);
+		v.setValueAt(e, 1);
+		return v;
 	}
 
-	public E decode(Matrix vector){
+	E decode(Matrix vector){
 		//x = beta * vector //temperature-adjusted probabilities
 		//v = exp(x) / sum(exp(x))
-		Matrix p = vector.scalarOp(Util.MULTIPLICATION, beta).inplaceElementWise(Math::exp); //beware of overflows
+		Matrix p = vector.scalarOp(Util::multiplication, beta).inplaceElementWise(Math::exp); //beware of overflows
 		double scalar = p.aggregateOp(Util::sum);
-		double[] v = p.scalarOp(Util.DIVISION, scalar).getValuesInColumn(0);
+		double[] v = p.scalarOp(Util::division, scalar).getValuesInColumn(0);
 		
 		double selection = ThreadLocalRandom.current().nextDouble();
 		for(int i = 0; i < v.length; i++){
@@ -55,10 +53,10 @@ public class RnnEncDec<E extends Comparable<E>> {
 		return null;
 	}
 
-	public E decodeMax(Matrix r){
+	E decodeMax(Matrix r){
 		double max = Double.MIN_VALUE;
 		int j = 0;
-		for(int i = 0; i < r.n; i++){
+		for(int i = 0; i < r.rows; i++){
 			if(r.getValueAt(i,0) > max){
 				max = r.getValueAt(i,0);
 				j = i;
@@ -67,8 +65,8 @@ public class RnnEncDec<E extends Comparable<E>> {
 		return backward.get(j);
 	}
 	
-	public static int indexOf(Matrix vector){
-		for(int i = 0; i < vector.n; i++){
+	static int indexOf(Matrix vector){
+		for(int i = 0; i < vector.rows; i++){
 			if(vector.getValueAt(i,0) >= 1){
 				return i;
 			}
@@ -80,7 +78,7 @@ public class RnnEncDec<E extends Comparable<E>> {
 	 * @param t Temperature, positive.
 	 * */
 	public void setTemperature(double t){
-		if(t <= 0) throw new IllegalArgumentException("Argument must be between positive");
+		if(t <= 0) throw new IllegalArgumentException("Argument must be positive");
 		beta = 1/t;
 	}
 }

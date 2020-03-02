@@ -4,3 +4,6 @@
 .settings/
 bin/
 store/
+/JayRnn.iml
+/jayrnn.ini
+/*.rnn

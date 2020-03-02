@@ -2,7 +2,7 @@ package ch.dajay42.rnn;
 
 import java.util.List;
 
-import ch.dajay42.math.Matrix;
+import ch.dajay42.math.linAlg.Matrix;
 
 public interface Rnn{
 
